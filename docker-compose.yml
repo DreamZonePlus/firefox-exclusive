@@ -1,0 +1,39 @@
+services:
+  firefox:
+    image: jlesage/firefox
+    environment:
+      - TZ=Etc/UTC
+      # بدون كلمة سر — البوابة تدير الدخول
+      - WEB_AUTHENTICATION=0
+      # التشفير يقوم به البروكسي الخارجي (Coolify/Traefik) — الاتصال الداخلي HTTP
+      - SECURE_CONNECTION=0
+      # تعطيل VNC حتى لا يُتجاوَز نظام "واحد في الوقت"
+      - VNC_LISTENING_PORT=-1
+      # - DISPLAY_WIDTH=1920
+      # - DISPLAY_HEIGHT=1080
+      # - FF_KIOSK=1            # وضع عام مقيّد (اختياري)
+      # - WEB_AUDIO=1           # الصوت (اختياري)
+    volumes:
+      - firefox-config:/config:rw
+    restart: unless-stopped
+    # ملاحظة مهمة: لا تنشر أي منفذ لخدمة firefox — الوصول يتم عبر البوابة فقط.
+
+  gateway:
+    build: ./gateway
+    depends_on:
+      - firefox
+    environment:
+      - BACKEND_HOST=firefox
+      - BACKEND_PORT=5800
+      - LISTEN_PORT=8080
+      - LOCK_MAX_MINUTES=60      # الحد الأقصى لجلسة المستخدم الواحد
+      - LOCK_GRACE_SECONDS=120   # مدة الحجب بعد مغادرة المستخدم قبل تحرير الدور
+      - BUSY_RETRY_SECONDS=10   # معدل إعادة المحاولة في صفحة "مشغول"
+    restart: unless-stopped
+    # في Coolify: اربط الدومين بخدمة gateway على المنفذ 8080.
+    # خارج Coolify: أضف تعيين المنفذ التالي عند الحاجة:
+    # ports:
+    #   - "5800:8080"
+
+volumes:
+  firefox-config:
