@@ -23,23 +23,25 @@ services:
     depends_on:
       - firefox
     environment:
+      # الإعدادات قابلة للتعديل من Coolify (Environment Variables ← Production)
+      # عبر متغيرات بنمط ${VAR:-القيمة-الافتراضية} — وبقيم مطابقة للسلوك الافتراضي.
       - BACKEND_HOST=firefox
       - BACKEND_PORT=5800
       - LISTEN_PORT=8080
-      - LOCK_MAX_MINUTES=60      # الحد الأقصى لجلسة المستخدم الواحد
-      - LOCK_GRACE_SECONDS=120   # مدة الحجب بعد مغادرة المستخدم قبل تحرير الدور
-      - BUSY_RETRY_SECONDS=10   # معدل إعادة المحاولة في صفحة "مشغول"
+      - LOCK_MAX_MINUTES=${LOCK_MAX_MINUTES:-60}      # الحد الأقصى لجلسة المستخدم الواحد
+      - LOCK_GRACE_SECONDS=${LOCK_GRACE_SECONDS:-120} # مدة الحجب بعد مغادرة المستخدم قبل تحرير الدور
+      - BUSY_RETRY_SECONDS=${BUSY_RETRY_SECONDS:-10} # معدل إعادة المحاولة في صفحة "مشغول"
 
       # ==== إعدادات اختيارية — موجودة لكنها معطّلة افتراضياً ====
       # تفعيل تسجيل الدخول: املأ القيمتين معاً فتظهر صفحة دخول قبل الوصول للمتصفح.
       # اتركهما فارغين للدخول المباشر بدون كلمة سر (الوضع الافتراضي).
-      - AUTH_USERNAME=
-      - AUTH_PASSWORD=
+      - AUTH_USERNAME=${AUTH_USERNAME:-}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-}
       # عدد المستخدمين المسموح لهم بالدخول في نفس الوقت.
       # 1 = وضع "واحد في الوقت" (الافتراضي). عند رفعها يُسمح لهذا العدد معاً فقط.
-      - MAX_USERS=1
+      - MAX_USERS=${MAX_USERS:-1}
       # مفتاح تحرير القفل يدوياً عند الحاجة: /__gateway/status?release=<المفتاح>
-      - ADMIN_KEY=adm-14ccf64a54f9dcc50fb4b8cd
+      - ADMIN_KEY=${ADMIN_KEY:-adm-14ccf64a54f9dcc50fb4b8cd}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.LISTEN_PORT||8080)+'/__gateway/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

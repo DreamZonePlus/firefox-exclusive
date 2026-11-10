@@ -444,7 +444,6 @@ function proxyHttp(req, res, extraHeaders, effSid) {
 
 // ---------- وكالة WebSocket ----------
 function handleUpgrade(req, socket, head) {
-  log('DEBUG handleUpgrade entry; auth valid =', hasValidAuth(req));
   socket.setNoDelay(true);
 
   // مع تفعيل المصادقة: يُشترط توكن تسجيل دخول صالح حتى لاتصال WebSocket.
@@ -498,7 +497,6 @@ function handleUpgrade(req, socket, head) {
   upSock.setNoDelay(true);
 
   upSock.on('connect', () => {
-    log('DEBUG upSock connected');
     upSock.write(raw);
     if (head && head.length) upSock.write(head);
     socket.pipe(upSock);
@@ -522,17 +520,26 @@ function handleUpgrade(req, socket, head) {
   });
 
   const onGone = () => {
-    log(`DEBUG onGone: owningSlot=${!!owningSlot}`, owningSlot ? `sid=${owningSlot.sid.slice(0, 8)} inMap=${slots.get(owningSlot.sid) === owningSlot} size=${owningSlot.sockets.size} graceTimer=${!!owningSlot.graceTimer}` : '');
     if (!owningSlot) return;
     owningSlot.sockets.delete(socket);
     if (slots.get(owningSlot.sid) === owningSlot && owningSlot.sockets.size === 0) {
       scheduleGrace(owningSlot);
     }
   };
-  socket.on('close', () => { log('DEBUG socket close'); onGone(); });
-  upSock.on('close', () => { log('DEBUG upSock close'); onGone(); });
-  socket.on('error', (e) => { log('DEBUG socket error:', e.message); upSock.destroy(); });
-  upSock.on('error', (e) => { log('DEBUG upSock error:', e.message); socket.destroy(); });
+  // قطع الاتصال فور أول إشارة انقطاع من أي اتجاه.
+  // جوهري: لا نكتفي بحدث 'close' — إغلاق WebSocket يبدأ عادة بإرسال FIN من
+  // العميل (حدث 'end' لجهة القراءة)، وكثير من الخوادم الخلفية لا ترد بإغلاق
+  // الاتجاه المقابل، فيبقى السوكيت "نصف مفتوح" ولا يُطلق 'close' أبداً.
+  const sever = () => {
+    try { socket.destroy(); } catch (_) { /* ignore */ }
+    try { upSock.destroy(); } catch (_) { /* ignore */ }
+  };
+  socket.on('close', onGone);
+  socket.on('end', sever);
+  socket.on('error', sever);
+  upSock.on('close', onGone);
+  upSock.on('end', sever);
+  upSock.on('error', sever);
 }
 
 // ---------- الخادم ----------
