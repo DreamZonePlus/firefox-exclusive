@@ -1,4 +1,4 @@
-# متصفح Firefox بجلسة حصرية — "واحد في الوقت" بدون كلمة سر
+# متصفح Firefox بجلسة حصرية "واحدة في الوقت" بدون كلمة سر
 
 غلاف حول حاوية [jlesage/docker-firefox](https://github.com/jlesage/docker-firefox) يضيف ميزة غير موجودة في الحاوية الأصلية:
 
