@@ -34,6 +34,9 @@ const BUSY_RETRY_SECONDS = numEnv('BUSY_RETRY_SECONDS', 10);
 const COOKIE_NAME = 'fx_gate_sid';
 const COOKIE_MAX_AGE = 30 * 24 * 3600; // 30 يوماً بالثواني
 
+// نقطة نهاية عامة لمعرفة حالة البوابة (مفيدة للتحقق من أن المرور عبرها).
+const STATUS_PATH = '/__gateway/status';
+
 // ---------- أدوات مساعدة ----------
 function intEnv(name, dflt) {
   const n = parseInt(process.env[name], 10);
@@ -198,8 +201,29 @@ function busyPage(res, note) {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
     'Retry-After': String(BUSY_RETRY_SECONDS),
+    'X-FX-Gateway': '1',
   });
   res.end(html);
+}
+
+// ---------- نقطة نهاية الحالة ----------
+function statusPage(req, res) {
+  const payload = {
+    gateway: 'firefox-exclusive',
+    status: lock ? 'busy' : 'free',
+    locked: !!lock,
+    minutesLeft: lock ? Math.max(0, +((lock.hardDeadline - Date.now()) / 60000).toFixed(1)) : null,
+    graceSeconds: LOCK_GRACE_SECONDS,
+    maxMinutes: LOCK_MAX_MINUTES,
+    activeSockets: lock ? lock.sockets.size : 0,
+    backend: `${BACKEND_HOST}:${BACKEND_PORT}`,
+  };
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-FX-Gateway': '1',
+  });
+  res.end(JSON.stringify(payload, null, 2));
 }
 
 // ---------- وكالة HTTP ----------
@@ -213,6 +237,7 @@ function proxyHttp(req, res, extraHeaders) {
     (upRes) => {
       const out = { ...upRes.headers };
       for (const h of HOP_BY_HOP) delete out[h];
+      out['X-FX-Gateway'] = '1';
       if (extraHeaders) Object.assign(out, extraHeaders);
       res.writeHead(upRes.statusCode, upRes.statusMessage, out);
       upRes.pipe(res);
@@ -221,7 +246,10 @@ function proxyHttp(req, res, extraHeaders) {
   upReq.on('error', (err) => {
     log('خطأ في الوصول للخدمة الخلفية:', err.message);
     if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.writeHead(502, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-FX-Gateway': '1',
+      });
       res.end('تعذر الوصول إلى الخدمة الخلفية');
     } else {
       res.destroy();
@@ -273,6 +301,11 @@ function handleUpgrade(req, socket, head) {
 
 // ---------- الخادم ----------
 const server = http.createServer((req, res) => {
+  // نقطة الحالة: عامة ولا تمر عبر نظام الحجز.
+  if ((req.url || '').split('?')[0] === STATUS_PATH) {
+    return statusPage(req, res);
+  }
+
   if (isOwner(req)) {
     cancelGrace();
     return proxyHttp(req, res);
