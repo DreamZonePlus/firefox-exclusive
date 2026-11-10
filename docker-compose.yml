@@ -29,6 +29,8 @@ services:
       - LOCK_MAX_MINUTES=60      # الحد الأقصى لجلسة المستخدم الواحد
       - LOCK_GRACE_SECONDS=120   # مدة الحجب بعد مغادرة المستخدم قبل تحرير الدور
       - BUSY_RETRY_SECONDS=10   # معدل إعادة المحاولة في صفحة "مشغول"
+      # مفتاح تحرير القفل يدوياً عند الحاجة: /__gateway/status?release=<المفتاح>
+      - ADMIN_KEY=adm-14ccf64a54f9dcc50fb4b8cd
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.LISTEN_PORT||8080)+'/__gateway/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

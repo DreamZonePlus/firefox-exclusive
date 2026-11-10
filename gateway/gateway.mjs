@@ -31,6 +31,10 @@ const LOCK_GRACE_SECONDS = numEnv('LOCK_GRACE_SECONDS', 120);
 // كل كم ثانية تُعِيد صفحة "مشغول" المحاولة تلقائياً.
 const BUSY_RETRY_SECONDS = numEnv('BUSY_RETRY_SECONDS', 10);
 
+// مفتاح إداري (اختياري): يسمح بتحرير القفل يدوياً عبر
+// /__gateway/status?release=<ADMIN_KEY> دون إعادة نشر.
+const ADMIN_KEY = process.env.ADMIN_KEY || '';
+
 const COOKIE_NAME = 'fx_gate_sid';
 const COOKIE_MAX_AGE = 30 * 24 * 3600; // 30 يوماً بالثواني
 
@@ -208,6 +212,14 @@ function busyPage(res, note) {
 
 // ---------- نقطة نهاية الحالة ----------
 function statusPage(req, res) {
+  // تحرير إداري اختياري: /__gateway/status?release=<ADMIN_KEY>
+  if (ADMIN_KEY) {
+    let key = null;
+    try {
+      key = new URL(req.url, 'http://localhost').searchParams.get('release');
+    } catch (_) { /* ignore */ }
+    if (key === ADMIN_KEY) releaseLock('تحرير إداري عبر ADMIN_KEY');
+  }
   const payload = {
     gateway: 'firefox-exclusive',
     status: lock ? 'busy' : 'free',
@@ -241,6 +253,11 @@ function proxyHttp(req, res, extraHeaders) {
       if (extraHeaders) Object.assign(out, extraHeaders);
       res.writeHead(upRes.statusCode, upRes.statusMessage, out);
       upRes.pipe(res);
+      // إصلاح حرج: إذا انتهى طلب HTTP ولم يفتح المالك أي WebSocket،
+      // نبدأ عداد التحرير — حتى لا يحجز زائر HTTP عادي (بوت/فحص) الدور كاملاً.
+      res.on('close', () => {
+        if (lock && lock.sockets.size === 0) scheduleGrace();
+      });
     }
   );
   upReq.on('error', (err) => {
@@ -261,13 +278,28 @@ function proxyHttp(req, res, extraHeaders) {
 // ---------- وكالة WebSocket ----------
 function handleUpgrade(req, socket, head) {
   socket.setNoDelay(true);
+  let sid = getSession(req);
+  let setCookieHeader = null;
 
-  if (!isOwner(req)) {
+  if (isOwner(req)) {
+    cancelGrace();
+  } else if (lock) {
+    // الدور محجوز من غيره: رفض.
     socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return;
+  } else {
+    // لا حجز حالياً: اتصال WebSocket بلا كوكي (مثلاً صفحة قديمة من ذاكرة المتصفح)
+    // يلتقط الدور مباشرة — وهذا يجعل "Reconnecting..." تشفى ذاتياً دون تحديث الصفحة.
+    if (isEvicted(sid)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    const newSid = sid || crypto.randomBytes(16).toString('hex');
+    acquireLock(newSid);
+    setCookieHeader = `${COOKIE_NAME}=${newSid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}`;
   }
-  cancelGrace();
 
   // إعادة بناء الطلب الخام كما هو (مع تعديل Host) وتمريره للخدمة الخلفية.
   const headers = { ...req.headers, host: `${BACKEND_HOST}:${BACKEND_PORT}` };
@@ -285,7 +317,22 @@ function handleUpgrade(req, socket, head) {
     upSock.write(raw);
     if (head && head.length) upSock.write(head);
     socket.pipe(upSock);
-    upSock.pipe(socket);
+    if (setCookieHeader) {
+      // اعتراض مصافحة رد الخلفية لحقن كوكي المالك ضمن ترويسات 101.
+      let hs = Buffer.alloc(0);
+      const onHs = (d) => {
+        hs = Buffer.concat([hs, d]);
+        const idx = hs.indexOf('\r\n\r\n');
+        if (idx === -1) return;
+        upSock.off('data', onHs);
+        const cookieBuf = Buffer.from(`\r\nSet-Cookie: ${setCookieHeader}`, 'latin1');
+        socket.write(Buffer.concat([hs.slice(0, idx), cookieBuf, hs.slice(idx)]));
+        upSock.pipe(socket);
+      };
+      upSock.on('data', onHs);
+    } else {
+      upSock.pipe(socket);
+    }
     if (lock === owningLock) owningLock.sockets.add(socket);
   });
 
